@@ -7,7 +7,7 @@ from datetime import datetime
 import pytz
 
 # Variáveis globais
-acoes = {"PETR4": 39.67, "VALE3": 88.73}
+acoes = {"PETR4": 43.67, "VALE3": 78.35, "ABEV3": 15.29, 'CPFE3': 48.17}
 saldo = 10000.00
 carteira = {}
 
