@@ -11,8 +11,6 @@ import os
 
 # Variáveis globais
 acoes = {"PETR4": 43.67, "VALE3": 78.35, "ABEV3": 15.29, 'CPFE3': 48.17}
-#saldo = 10000.00
-#carteira = {}
 usuarios = {}
 
 # Arquivo que vai guardar o login, saldo e carteira
@@ -106,7 +104,7 @@ def processar_ordens(conn, usuario, stop_event):
                     saldo = usuarios[usuario]["saldo"]
                     carteira = usuarios[usuario]["carteira"]
                     
-                    if comando[0] == ":buy":
+                    if comando[0].lower() == ":buy":
                         ativo = comando[1].upper()
                         try:
                             qtd = abs(int(comando[2])) # Assumindo que, ao digitar uma quantidade negativa, o client na verdade queria o valor absoluto daquilo.
@@ -121,7 +119,7 @@ def processar_ordens(conn, usuario, stop_event):
                                 saldo -= custo
                                 carteira[ativo] = carteira.get(ativo, 0) + qtd
 
-                                usuarios[usuario]["saldo"] = saldo
+                                usuarios[usuario]["saldo"] = saldo.round(2)
                                 usuarios[usuario]["carteira"] = carteira
                                 salvar_dados() 
                                 
@@ -134,7 +132,7 @@ def processar_ordens(conn, usuario, stop_event):
                             # Manda o feedback negativo para o client caso ele não encontre o ativo digitado
                             conn.sendall("Ativo inválido\n".encode())
 
-                    elif comando[0] == ":sell":
+                    elif comando[0].lower() == ":sell":
                         ativo = comando[1].upper()
                         
                         try:
@@ -150,7 +148,7 @@ def processar_ordens(conn, usuario, stop_event):
                             if carteira[ativo] == 0:
                                 del carteira[ativo]
                                 
-                            usuarios[usuario]["saldo"] = saldo
+                            usuarios[usuario]["saldo"] = saldo.round(2)
                             usuarios[usuario]["carteira"] = carteira
                             salvar_dados()
                             
@@ -160,12 +158,12 @@ def processar_ordens(conn, usuario, stop_event):
                             # Manda o feedback negativo para o client caso ele não encontre o ativo digitado ou a quantia seja inválida
                             conn.sendall("Quantidade inválida e/ou Ativo inválido\n".encode())
 
-                    elif comando[0] == ":carteira":
+                    elif comando[0].lower() == ":carteira":
                         message = f"Saldo: {saldo:.2f} | Carteira: " + "".join(f"{acao} - {carteira[acao]}  |  " for acao in carteira) + "\n"
                         # Mostra os dados da carteira para o client
                         conn.sendall(message.encode())
 
-                    elif comando[0] == ":exit":
+                    elif comando[0].lower() == ":exit":
                         conn.sendall("Encerrando conexão...\n".encode())
                         stop_event.set()
                         break
@@ -204,11 +202,11 @@ def iniciar_servidor():
     # Carregando o json
     carregar_dados()
     
-    # Setandos a host e a port
+    # Setando a host e a port
     host = "127.0.0.1"
     port = 5000
     
-    # Criando e configurando o socket do server com um tamanho de backlog igual a 1 (fila de conexões)
+    # Criando e configurando o socket do server
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.bind((host, port))
     server.listen()
@@ -217,7 +215,6 @@ def iniciar_servidor():
     shutdown_event = threading.Event()
 
     print("[Servidor] aguardando conexão...")
-
 
     while not shutdown_event.is_set():
         try:
@@ -230,7 +227,7 @@ def iniciar_servidor():
                 print(f"[ERRO ACCEPT] {e}")
                 continue
             
-                # Checando se o servidor tá lotado
+            # Checando se o servidor tá lotado
             if clientes_conectados >= max_clientes:
                 try:
                     conn.sendall("Servidor lotado. Tente novamente mais tarde.\n".encode())
@@ -268,7 +265,7 @@ def iniciar_servidor():
                     }
                     salvar_dados()
 
-                # Definindo o fuso horário de Brasília
+            # Definindo o fuso horário de Brasília
             brasiliatime = pytz.timezone('America/Sao_Paulo')
 
             # Pegando a hora atual no fuso certo
@@ -296,15 +293,13 @@ def iniciar_servidor():
             thread_feed.start()
             thread_ordens.start()
             
-        except KeyboardInterrupt:
-            print("\n[Servidor] Encerrando com segurança...")
-                
-            shutdown_event.set() 
-            salvar_dados()
-                
-            try:
-                server.close()
-            except:
-                pass
+        except Exception as e:
+            print(f"[ERRO INESPERADO NO SERVIDOR] {e}")
 
-iniciar_servidor()
+if __name__ == "__main__":
+    try:
+        iniciar_servidor()
+    except KeyboardInterrupt:
+        print("\n[Servidor] Encerrando com segurança...")
+        salvar_dados()
+        sys.exit(0)

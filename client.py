@@ -1,8 +1,10 @@
 import socket
 import threading
 
+stop_event = threading.Event()
+
 def receber_feed(sock):
-    while True:
+    while not stop_event.is_set():
         try:
             # Decodificando os dados recebidos do servidor
             data = sock.recv(1024).decode()
@@ -18,19 +20,24 @@ def receber_feed(sock):
             break    
         
         except Exception as e:
-            print(f"Erro: {e}")
+            if not stop_event.is_set():
+                print(f"Erro: {e}")
             break
 
 def enviar_comandos(sock):
-    while True:
+    while not stop_event.is_set():
         try:
             comando = input()
             # Enviando o comando codificado para o servidor
             sock.sendall(comando.encode())
 
             if comando == ":exit":
+                stop_event.set()
                 break
-
+        except (KeyboardInterrupt, EOFError):
+            stop_event.set()
+            break
+        
         except BrokenPipeError:
             print("Servidor desconectado.")
             break
@@ -53,19 +60,23 @@ def iniciar_cliente():
         print("Não foi possível conectar ao servidor.")
         return
 
-    # Definição do usuário
-    print(cliente.recv(1024).decode())
-    usuario = input()
-    cliente.sendall(usuario.encode())
-    
-    # Criando as threads de recebimento do feed e push dos comandos 
-    thread_receber = threading.Thread(target=receber_feed, args=(cliente,))
-    thread_enviar = threading.Thread(target=enviar_comandos, args=(cliente,))
+    try: 
+        # Definição do usuário
+        print(cliente.recv(1024).decode())
+        usuario = input()
+        cliente.sendall(usuario.encode())
+        
+        # Criando as threads de recebimento do feed e push dos comandos 
+        thread_receber = threading.Thread(target=receber_feed, args=(cliente,), daemon=True)
+        thread_enviar = threading.Thread(target=enviar_comandos, args=(cliente,), daemon=True)
 
-    # Starta as threads
-    thread_receber.start()
-    thread_enviar.start()
-
+        # Starta as threads
+        thread_receber.start()
+        thread_enviar.start()
+        
+    except KeyboardInterrupt:
+        print("\n[CLIENTE] Encerrando...")
+        
     try:
         thread_enviar.join()
         thread_receber.join()
