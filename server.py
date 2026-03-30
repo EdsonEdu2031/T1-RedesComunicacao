@@ -38,13 +38,15 @@ def salvar_dados():
         with open(arquivo_db, "w") as f:
             json.dump(usuarios, f)
     except Exception as e:
-        print(f"[ERRO SALVAR] {e}")
+        print(f"Erro ao salvar .json: {e}")
 
 
 def simular_precos(conn, stop_event):
     while not stop_event.is_set():
         # Setando o delay da alteração dos preços a cada 10 segundos
         time.sleep(10) 
+        
+        # Garante que uma thread funcione por vez
         with lock:
             # Variando preços de -1 a 1 de 0.1 em 0.1 (centavos)
             var_precos = np.arange(-1, 1.1, 0.1)
@@ -59,21 +61,22 @@ def simular_precos(conn, stop_event):
             try:
                 # Envia para o client a mensagem com os valores atualizados
                 conn.sendall(mensagem.encode())
+                
+            # Se der algum erro, para
             except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, OSError):
-                break  # erro normal de desconexão
+                break  
 
             except Exception as e:
-                print(f"[ERRO FEED INESPERADO] {e}")
+                print(f"Erro: {e}")
                 break
 
 
 def processar_ordens(conn, usuario, stop_event):
-    
     global clientes_conectados
     try: 
-        while True:
+        while not stop_event.is_set():
             try:
-                # Recebe e decodifica o comando do client
+                # Recebe e decodifica o comando vindo do client
                 data = conn.recv(1024).decode().strip()
                 if not data:
                     break
@@ -94,11 +97,13 @@ def processar_ordens(conn, usuario, stop_event):
                 if comando[0] in [":buy", ":sell"] and len(comando) < 3:
                     conn.sendall("Formato inválido. Use :buy/:sell <ATIVO> <QTD>\n".encode())
                     continue
+                
                 # Checando se ao usar :carteira digitou algo a mais também
                 elif comando[0] == ':carteira' and len(comando) > 1:
                     conn.sendall("Formato inválido. Use apenas :carteira\n".encode())
                     continue
                 
+                # Garante que uma thread funcione por vez
                 with lock:
                     # Puxando os dados do cliente em questão
                     saldo = usuarios[usuario]["saldo"]
@@ -115,7 +120,7 @@ def processar_ordens(conn, usuario, stop_event):
                         if ativo in acoes:
                             custo = acoes[ativo] * qtd
                             if saldo >= custo:
-                                # Atualiza o saldo e a quantidade na carteira do usuário em questão
+                                # Atualiza o saldo e a quantidade na carteira do usuário em questão e salva no .json
                                 saldo -= custo
                                 carteira[ativo] = carteira.get(ativo, 0) + qtd
 
@@ -142,7 +147,7 @@ def processar_ordens(conn, usuario, stop_event):
                             continue
                         
                         if ativo in carteira and carteira[ativo] >= qtd:
-                            # Atualiza o saldo e retira quantia da carteira
+                            # Atualiza o saldo e retira quantia da carteira e salva no .json
                             saldo += acoes[ativo] * qtd
                             carteira[ativo] -= qtd
                             if carteira[ativo] == 0:
@@ -167,12 +172,14 @@ def processar_ordens(conn, usuario, stop_event):
                         conn.sendall("Encerrando conexão...\n".encode())
                         stop_event.set()
                         break
-
+                
+            # Se der qualquer erro, apenas para
             except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, OSError):
                 break
             except Exception as e:
-                print(f"[ERRO CLIENTE] {e}")
+                print(f"Erro: {e}")
                 break
+            
     # Garantindo a limpeza
     finally:
         stop_event.set()
@@ -186,12 +193,12 @@ def processar_ordens(conn, usuario, stop_event):
             # Diminui o número de clientes conectados
             clientes_conectados -= 1
 
-        print(f"[INFO] Cliente {usuario} desconectado.")
+        print(f"{usuario} desconectado.")
 
 def iniciar_servidor():
     global clientes_conectados
     
-    # Pega o número de clientes dado na inicialização do servidor
+    # Se o comando dado ao iniciar estiver no formato errado, printamos o formato correto
     if len(sys.argv) < 2:
         print("Inicialização: python server.py <max_clientes>")
         return
@@ -206,12 +213,19 @@ def iniciar_servidor():
     host = "127.0.0.1"
     port = 5000
     
-    # Criando e configurando o socket do server
+    # Criando e conectando o socket na mesma host/port do client utilizando Ipv4 e TCP (protocolos padrões)
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    
+    # Toma posse do host e port escolhidos
     server.bind((host, port))
+    
+    # Coloca o socket em modo de espera
     server.listen()
+    
+    # Dá um respiro é pro accept
     server.settimeout(1)
     
+    # Serve como flag da conexão, irá parar todas as outras threads
     shutdown_event = threading.Event()
 
     print("[Servidor] aguardando conexão...")
@@ -221,10 +235,12 @@ def iniciar_servidor():
             try:
                 # Aceitando a conexão com o client, onde conn é o socket do client e o addr é o endereço ligado ao client
                 conn, addr = server.accept()
+            
+            # O Python tenta esperar por 1 segundo, se ninguém conectar, ele retorna pro loop, permitindo a detecção de CTRL C
             except socket.timeout:
                 continue
             except Exception as e:
-                print(f"[ERRO ACCEPT] {e}")
+                print(f"Erro: {e}")
                 continue
             
             # Checando se o servidor tá lotado
@@ -282,10 +298,12 @@ def iniciar_servidor():
                 with lock:
                     clientes_conectados -= 1
                 continue
-
+            
+            # Serve como flag para o servidor, irá parar todas as outras threads
             stop_event = threading.Event()
             
             # Criando as threads de simulação de preços e do processamento dos comandos
+            # daemon=True garante que quando todas threads serão fechadas ao fechar a thread (iniciar_servidor())
             thread_feed = threading.Thread(target=simular_precos, args=(conn, stop_event), daemon=True) 
             thread_ordens = threading.Thread(target=processar_ordens, args=(conn, usuario, stop_event), daemon=True)  
 
@@ -294,8 +312,9 @@ def iniciar_servidor():
             thread_ordens.start()
             
         except Exception as e:
-            print(f"[ERRO INESPERADO NO SERVIDOR] {e}")
+            print(f"Erro: {e}")
 
+# Detecta tudo primeiro "baixo nível", quando der CTRL C ele irá salvar os dados e fechar em segurança
 if __name__ == "__main__":
     try:
         iniciar_servidor()
